@@ -1,0 +1,27 @@
+# Generated images
+thermal_output/*
+!thermal_output/.gitkeep
+
+# Database (persists locally through pulls)
+*.db
+
+# Logs (persists locally through pulls)
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference docs (download separately if needed)
+*.pdf

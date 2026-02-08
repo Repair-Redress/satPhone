@@ -1,0 +1,55 @@
+# SatPhone - Satellite Thermal Imagery SMS Service
+
+## Project Overview
+SMS/MMS service that runs on a Moto G Power 2024 5G (Termux) and delivers satellite thermal imagery to users who text a location.
+
+## Target Hardware
+- **Device:** Moto G Power 2024 5G (128GB, 4GB RAM)
+- **CPU:** MediaTek Dimensity 7020 (8-core, 2.2GHz)
+- **Runtime:** Termux on Android (no root)
+- **Constraints:** 4GB RAM is the main bottleneck — use streaming/chunked processing
+
+## Core Pipeline
+1. **SMS Trigger:** User texts "SAT <location>" (e.g., "SAT Yellowstone")
+2. **Geocode:** Convert location name → lat/lon (if needed)
+3. **STAC Search:** Query Microsoft Planetary Computer for Landsat thermal scenes
+4. **COG Read:** Windowed read of only the needed ~8km×8km area (~500KB download vs 100MB full scene)
+5. **Process:** Apply thermal colormap, compress to JPEG (~100KB target for MMS)
+6. **Reply:** Send MMS with thermal image back to user
+
+## Data Sources
+- **Primary:** Microsoft Planetary Computer (free, no API key)
+- **Collection:** `landsat-c2-l2` (Landsat Collection 2 Level 2)
+- **Band:** `lwir11` (Band 10 thermal infrared)
+- **Format:** Cloud Optimized GeoTIFF (COG)
+
+## Key Files
+- `thermal_sms_test.py` — Working test script for the core pipeline
+- `rate_limit.py` — Rate limiting, abuse protection, and credit system
+- `thermal_output/` — Directory for generated thermal images
+
+## Performance Targets
+| Step | Desktop | Phone Target |
+|------|---------|--------------|
+| STAC search | ~4s | ~8-10s |
+| COG read | ~5s | ~10-15s |
+| Processing | <0.1s | ~1s |
+| **Total** | ~8s | ~15-25s |
+
+## Business Model (Planned)
+- Credit-based system via Stripe Payment Links
+- SQLite database for user credits on the phone
+- SMS commands: `SAT <location>`, `BUY`, `BALANCE`
+- Pricing: ~$0.25/image, sold in packs ($5 for 20 images)
+
+## Tech Stack
+- Python (pystac-client, planetary-computer, rasterio, numpy, Pillow)
+- SQLite for user/credit storage
+- Termux + Tasker for SMS automation
+- Cloudflare Tunnel for exposing webhooks (Stripe)
+
+## Code Principles
+- Memory-efficient: streaming reads, chunked processing
+- Fast startup: keep imports minimal where possible
+- Robust: handle network failures gracefully
+- MMS-friendly: target <100KB JPEG output
