@@ -95,7 +95,15 @@ All constants live in `config.py`. Key settings:
 
 ## Persistence
 
-Log files (`satphone.log`), the database (`satphone.db`), and generated images (`thermal_output/`) are all gitignored — they persist locally through `git pull` updates and are never overwritten by upstream changes.
+The following runtime files are **gitignored** — they are never pushed and `git pull` will never overwrite or delete them:
+
+| File | Purpose |
+|------|---------|
+| `satphone.db` | SQLite database (users, credits, rate limits) |
+| `satphone.log` | Rotating log files |
+| `thermal_output/*.jpg` | Generated thermal images |
+
+This means you can safely `git pull` to update the code on a running device without losing any data, logs, or generated images.
 
 ## License
 

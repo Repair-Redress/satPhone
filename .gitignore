@@ -1,11 +1,15 @@
-# Generated images
+# === Runtime data (never pushed, never overwritten by pulls) ===
+# These files are created at runtime and live only on the device.
+# git ignores them, so `git pull` will never touch or delete them.
+
+# Generated thermal images
 thermal_output/*
 !thermal_output/.gitkeep
 
-# Database (persists locally through pulls)
+# SQLite database (users, credits, rate limits)
 *.db
 
-# Logs (persists locally through pulls)
+# Rotating log files
 *.log
 
 # Python

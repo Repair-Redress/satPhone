@@ -10,10 +10,10 @@ SMS/MMS service that runs on a Moto G Power 2024 5G (Termux) and delivers satell
 - **Constraints:** 4GB RAM is the main bottleneck — use streaming/chunked processing
 
 ## Core Pipeline
-1. **SMS Trigger:** User texts "SAT <location>" (e.g., "SAT Yellowstone")
-2. **Geocode:** Convert location name → lat/lon (if needed)
+1. **SMS Trigger:** User texts "therm <lat> <lon>" (e.g., "therm 44.43 -110.59")
+2. **Validate:** Parse coordinates, check rate limits
 3. **STAC Search:** Query Microsoft Planetary Computer for Landsat thermal scenes
-4. **COG Read:** Windowed read of only the needed ~8km×8km area (~500KB download vs 100MB full scene)
+4. **COG Read:** Windowed read of only the needed ~4km×4km area (~500KB download vs 100MB full scene)
 5. **Process:** Apply thermal colormap, compress to JPEG (~100KB target for MMS)
 6. **Reply:** Send MMS with thermal image back to user
 
@@ -24,9 +24,14 @@ SMS/MMS service that runs on a Moto G Power 2024 5G (Termux) and delivers satell
 - **Format:** Cloud Optimized GeoTIFF (COG)
 
 ## Key Files
-- `thermal_sms_test.py` — Working test script for the core pipeline
-- `rate_limit.py` — Rate limiting, abuse protection, and credit system
-- `thermal_output/` — Directory for generated thermal images
+- `main.py` — Entry point and pipeline orchestrator
+- `config.py` — All configuration constants and paths (PROJECT_DIR anchored)
+- `thermal.py` — STAC search and satellite data fetching
+- `imaging.py` — Thermal colormap, overlay, image processing
+- `sms.py` — SMS message parsing, validation, request queue
+- `rate_limit.py` — Rate limiting, abuse protection, credit system
+- `logger.py` — Logging configuration (rotating file + console)
+- `setup_termux.sh` — One-command Termux setup
 
 ## Performance Targets
 | Step | Desktop | Phone Target |
@@ -39,7 +44,7 @@ SMS/MMS service that runs on a Moto G Power 2024 5G (Termux) and delivers satell
 ## Business Model (Planned)
 - Credit-based system via Stripe Payment Links
 - SQLite database for user credits on the phone
-- SMS commands: `SAT <location>`, `BUY`, `BALANCE`
+- SMS commands: `therm <lat> <lon>`, `BUY`, `BALANCE`
 - Pricing: ~$0.25/image, sold in packs ($5 for 20 images)
 
 ## Tech Stack
@@ -51,5 +56,10 @@ SMS/MMS service that runs on a Moto G Power 2024 5G (Termux) and delivers satell
 ## Code Principles
 - Memory-efficient: streaming reads, chunked processing
 - Fast startup: keep imports minimal where possible
-- Robust: handle network failures gracefully
+- Robust: handle network failures gracefully (retries with backoff)
 - MMS-friendly: target <100KB JPEG output
+- All paths anchored to PROJECT_DIR (never CWD-relative)
+
+## Persistence
+- `satphone.log`, `satphone.db`, and `thermal_output/` are gitignored
+- They persist locally through `git pull` — never overwritten by upstream
