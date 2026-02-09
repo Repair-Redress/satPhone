@@ -137,6 +137,15 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
     if shared_path is None:
         return False
 
+    # Bring Termux to foreground first — Android 14 blocks am start
+    # from background apps. After Tasker's previous cycle, Termux may
+    # be backgrounded. This restores foreground permission.
+    _run_cmd([
+        "am", "start",
+        "-n", "com.termux/.app.TermuxActivity",
+    ], timeout=5)
+    time.sleep(0.5)
+
     # Open messaging app with MMS pre-composed.
     # --activity-clear-task ensures a fresh activity (otherwise Android
     # reuses the existing one and silently ignores the extras).
@@ -160,9 +169,8 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
 
     log.info("Messaging app opened for MMS → %s", number)
 
-    # Step 2: Tell Tasker to tap Send after a delay.
-    # Tasker profile: Intent Received → com.satphone.TAP_SEND
-    # Tasker task: Wait 3s → AutoInput Click "MMS" → Go Home
+    # Tell Tasker to tap Send, then return to Termux.
+    # Tasker task: Wait 3s → AutoInput Click "MMS" → Launch Termux
     _run_cmd([
         "am", "broadcast",
         "--user", "0",
@@ -172,9 +180,9 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
 
     log.info("Tap-send broadcast → Tasker")
 
-    # Wait for AutoInput to finish (3s Tasker wait + tap + go home).
+    # Wait for AutoInput to finish (3s wait + tap + return to Termux).
     # This prevents the next MMS from colliding with the current one.
-    MMS_COOLDOWN = 8
+    MMS_COOLDOWN = 10
     log.info("Waiting %ds for MMS to complete...", MMS_COOLDOWN)
     time.sleep(MMS_COOLDOWN)
 
@@ -434,10 +442,12 @@ TASKER SETUP
     │    Text:   MMS                                      │
     └─────────────────────────────────────────────────────┘
 
-    ┌─ Action 3: Return to background ────────────────────┐
-    │  App → Go Home                                      │
-    │    Page: 1                                          │
-    └─────────────────────────────────────────────────────┘
+    ┌─ Action 3: Return to Termux ──────────────────────────┐
+    │  App → Launch App                                    │
+    │    App: Termux                                       │
+    │  (NOT "Go Home" — Termux must stay in foreground     │
+    │   so it can launch the next MMS)                     │
+    └──────────────────────────────────────────────────────┘
 
   STEP 2: Create the Profile
   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
