@@ -6,10 +6,9 @@
 #   chmod +x setup_termux.sh && ./setup_termux.sh
 #
 # Strategy:
-#   Heavy native packages (numpy, scipy, Pillow) are installed
-#   via Termux's package manager (pre-compiled for Android).
-#   A venv with --system-site-packages makes them available.
-#   Remaining pure-Python packages install via pip normally.
+#   1. Try Termux pre-built Python packages (fastest)
+#   2. Fall back to pip with Termux-specific build flags
+#   3. Install pure-Python packages normally via pip
 # ============================================================
 
 set -e
@@ -17,49 +16,89 @@ set -e
 echo "=== SatPhone Termux Setup ==="
 echo ""
 
-# --- 1. Update and add tur-repo for pre-built Python packages ---
-echo "[1/5] Updating Termux packages..."
+# --- 1. Update repos and install core packages ---
+echo "[1/6] Updating Termux packages..."
 pkg update -y && pkg upgrade -y
-pkg install -y tur-repo
 
-# --- 2. Install system + pre-compiled Python packages ---
 echo ""
-echo "[2/5] Installing system packages..."
+echo "[2/6] Installing system dependencies..."
 pkg install -y \
     python \
-    python-numpy \
-    python-scipy \
-    python-pillow \
+    build-essential \
+    binutils \
     gdal \
     proj \
     libxml2 \
     libjpeg-turbo \
     libpng \
-    build-essential \
+    libopenblas \
     git
+
+# --- 2. Try tur-repo for pre-built Python packages ---
+echo ""
+echo "[3/6] Installing Python scientific packages..."
+
+# Try tur-repo first (has pre-compiled numpy/scipy/pillow)
+if pkg install -y tur-repo 2>/dev/null; then
+    echo "  tur-repo available, trying pre-built packages..."
+    pkg install -y python-numpy python-scipy python-pillow 2>/dev/null && {
+        echo "  Pre-built packages installed successfully"
+        PREBUILT=true
+    } || {
+        echo "  Pre-built packages not available in tur-repo"
+        PREBUILT=false
+    }
+else
+    echo "  tur-repo not available"
+    PREBUILT=false
+fi
+
+# Fall back to pip with Termux build flags
+if [ "$PREBUILT" = false ]; then
+    echo "  Building from source with Termux flags..."
+    export LDFLAGS="-lm -lcompiler_rt"
+    export MATHLIB=m
+
+    pip install --upgrade pip setuptools wheel
+
+    echo "  Installing numpy (this may take a few minutes)..."
+    pip install numpy
+
+    echo "  Installing scipy..."
+    pip install scipy
+
+    echo "  Installing Pillow..."
+    pip install Pillow
+fi
 
 # --- 3. Create venv with access to system packages ---
 echo ""
-echo "[3/5] Setting up Python virtual environment..."
+echo "[4/6] Setting up Python virtual environment..."
 if [ ! -d ".venv" ]; then
     python -m venv --system-site-packages .venv
-    echo "Created .venv (with system site-packages)"
+    echo "  Created .venv (with system site-packages)"
 else
-    echo ".venv already exists, skipping"
+    echo "  .venv already exists, skipping"
 fi
 source .venv/bin/activate
 
-# --- 4. Install remaining Python packages via pip ---
-# numpy, scipy, Pillow are already satisfied by system packages.
-# pip will skip them and only install what's missing.
+# --- 4. Install remaining packages via pip ---
 echo ""
-echo "[4/5] Installing remaining Python dependencies..."
+echo "[5/6] Installing remaining Python dependencies..."
 pip install --upgrade pip
+
+# rasterio needs GDAL — set config path
+export GDAL_CONFIG="$(which gdal-config 2>/dev/null || echo '')"
+if [ -z "$GDAL_CONFIG" ]; then
+    echo "  WARNING: gdal-config not found. rasterio may fail to build."
+    echo "  Try: pkg install gdal"
+fi
+
 pip install rasterio pystac-client planetary-computer
 
 # --- 5. Create runtime directories ---
 echo ""
-echo "[5/5] Creating directories..."
+echo "[6/6] Creating directories..."
 mkdir -p thermal_output
 
 # --- Verify ---
@@ -72,10 +111,15 @@ print('  scipy', scipy.__version__)
 print('  Pillow', PIL.__version__)
 print('  rasterio', rasterio.__version__)
 print('All dependencies OK')
-"
+" && echo "" && echo "=== Setup Complete ===" || {
+    echo ""
+    echo "=== Setup had errors ==="
+    echo "Some imports failed. Try running the script again,"
+    echo "or install failing packages manually with:"
+    echo "  LDFLAGS='-lm -lcompiler_rt' pip install <package>"
+    exit 1
+}
 
-echo ""
-echo "=== Setup Complete ==="
 echo ""
 echo "To run SatPhone:"
 echo "  source .venv/bin/activate"
