@@ -107,10 +107,17 @@ fi
 # Rust is installed above so this will compile (takes ~10-30 min first time).
 pip install rasterio pystac-client planetary-computer
 
-# --- 5. Create runtime directories ---
+# --- 5. Create runtime directories and shared storage ---
 echo ""
-echo "[6/6] Creating directories..."
+echo "[6/6] Setting up directories..."
 mkdir -p thermal_output
+
+# Set up shared storage access (needed for MMS — Tasker reads images here)
+if [ ! -d "$HOME/storage/shared" ]; then
+    echo "  Granting shared storage access (tap Allow if prompted)..."
+    termux-setup-storage || echo "  (will need to run termux-setup-storage manually)"
+fi
+mkdir -p "$HOME/storage/shared/Pictures/SatPhone" 2>/dev/null || true
 
 # --- Verify ---
 echo ""

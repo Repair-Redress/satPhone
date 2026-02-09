@@ -4,16 +4,19 @@ SatPhone SMS Daemon — listens for SMS and replies with thermal images.
 
 Requires:
   - Termux:API add-on  (F-Droid → Termux:API, then: pkg install termux-api)
-  - For MMS replies:    Tasker + Termux:Tasker  (see --tasker-help)
+  - For MMS replies:    Tasker  (see --tasker-help for exact setup)
+  - NO Termux:Tasker needed — the daemon talks to Tasker via Android intents.
 
 Usage:
   python sms_daemon.py                           # run daemon
   python sms_daemon.py --handle "+1555..." "therm 44.43 -110.59"
   python sms_daemon.py --tasker-help             # Tasker setup guide
+  python sms_daemon.py --test-mms "+1555..."     # test MMS intent
 """
 
 import argparse
 import json
+import shutil
 import subprocess
 import sqlite3
 import sys
@@ -36,16 +39,22 @@ log = get_logger("satphone.daemon")
 
 POLL_INTERVAL = config.SMS_POLL_INTERVAL      # seconds between inbox checks
 SMS_FETCH_COUNT = config.SMS_FETCH_COUNT      # messages per poll
-MMS_OUTBOX = config.MMS_OUTBOX_DIR            # Tasker watches this directory
 TERMUX_API_TIMEOUT = 15                       # seconds for termux-api calls
+
+# Shared storage path where Tasker can access images.
+# Created by running `termux-setup-storage` once.
+SHARED_IMG_DIR = config.MMS_IMAGE_DIR
+
+# Android intent action that Tasker listens for
+MMS_INTENT_ACTION = "com.satphone.SEND_MMS"
 
 
 # ---------------------------------------------------------------------------
 # Termux:API wrappers
 # ---------------------------------------------------------------------------
 
-def _run_termux(args: list[str], timeout: int = TERMUX_API_TIMEOUT) -> Optional[str]:
-    """Run a termux-api command and return stdout, or None on failure."""
+def _run_cmd(args: list[str], timeout: int = TERMUX_API_TIMEOUT) -> Optional[str]:
+    """Run a command and return stdout, or None on failure."""
     try:
         result = subprocess.run(
             args, capture_output=True, text=True, timeout=timeout,
@@ -55,9 +64,7 @@ def _run_termux(args: list[str], timeout: int = TERMUX_API_TIMEOUT) -> Optional[
             return None
         return result.stdout
     except FileNotFoundError:
-        log.error(
-            "%s not found. Install Termux:API: pkg install termux-api", args[0],
-        )
+        log.error("%s not found.", args[0])
         return None
     except subprocess.TimeoutExpired:
         log.error("%s timed out after %ds", args[0], timeout)
@@ -66,8 +73,7 @@ def _run_termux(args: list[str], timeout: int = TERMUX_API_TIMEOUT) -> Optional[
 
 def send_sms(number: str, body: str) -> bool:
     """Send a text SMS via termux-sms-send."""
-    # SMS body limit is ~160 chars per segment; termux handles splitting
-    result = _run_termux(["termux-sms-send", "-n", number, body], timeout=30)
+    result = _run_cmd(["termux-sms-send", "-n", number, body], timeout=30)
     if result is not None:
         log.info("SMS → %s (%d chars)", number, len(body))
         return True
@@ -76,7 +82,7 @@ def send_sms(number: str, body: str) -> bool:
 
 def list_inbox(count: int = SMS_FETCH_COUNT) -> list[dict]:
     """Fetch recent inbox messages via termux-sms-list."""
-    output = _run_termux(
+    output = _run_cmd(
         ["termux-sms-list", "-l", str(count), "-t", "inbox"],
     )
     if output is None:
@@ -91,30 +97,55 @@ def list_inbox(count: int = SMS_FETCH_COUNT) -> list[dict]:
 
 def send_mms(number: str, body: str, image_path: Path) -> bool:
     """
-    Queue an MMS for Tasker to send.
+    Send MMS by copying image to shared storage and broadcasting an
+    Android intent that Tasker picks up.
 
-    Writes a JSON file to .mms_outbox/ which Tasker watches.
-    Returns True if the file was written successfully.
+    Flow:
+      1. Copy JPEG to ~/storage/shared/Pictures/SatPhone/ (Tasker can read it)
+      2. am broadcast → Tasker "Intent Received" profile fires
+      3. Tasker sends MMS with the image attached
 
-    Tasker setup: see --tasker-help flag.
+    No Termux:Tasker plugin needed — just plain Android intents.
     """
-    MMS_OUTBOX.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "to": number,
-        "body": body,
-        "image": str(image_path.resolve()),
-        "queued_at": time.time(),
-    }
-
-    outbox_file = MMS_OUTBOX / f"{int(time.time() * 1000)}.json"
-    try:
-        outbox_file.write_text(json.dumps(payload))
-        log.info("MMS queued → %s (%s)", number, outbox_file.name)
-        return True
-    except OSError as e:
-        log.error("Failed to write MMS outbox file: %s", e)
+    # Ensure shared storage is available
+    if not SHARED_IMG_DIR.parent.exists():
+        log.error(
+            "Shared storage not found at %s. "
+            "Run 'termux-setup-storage' and grant permission.",
+            SHARED_IMG_DIR.parent,
+        )
         return False
+
+    # Copy image to shared storage so Tasker can access it
+    SHARED_IMG_DIR.mkdir(parents=True, exist_ok=True)
+    shared_path = SHARED_IMG_DIR / image_path.name
+    try:
+        shutil.copy2(image_path, shared_path)
+        log.info("Image copied to shared storage: %s", shared_path)
+    except OSError as e:
+        log.error("Failed to copy image to shared storage: %s", e)
+        return False
+
+    # Broadcast intent to Tasker
+    # Tasker receives this via:  Profile → Event → Intent Received
+    #   Action: com.satphone.SEND_MMS
+    # Extras become Tasker variables: %recipient, %body, %image
+    broadcast_cmd = [
+        "am", "broadcast",
+        "--user", "0",
+        "-a", MMS_INTENT_ACTION,
+        "--es", "recipient", number,
+        "--es", "body", body,
+        "--es", "image", str(shared_path),
+    ]
+
+    result = _run_cmd(broadcast_cmd, timeout=10)
+    if result is not None:
+        log.info("MMS intent broadcast → %s", number)
+        return True
+
+    log.error("am broadcast failed — is Tasker installed?")
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +163,6 @@ def _init_tracking():
             ts       REAL
         )
     """)
-    # Prune entries older than 7 days
     conn.execute(
         "DELETE FROM processed_sms WHERE ts < ?", (time.time() - 604800,),
     )
@@ -206,10 +236,11 @@ def handle_message(sender: str, body: str, limiter: RateLimiter):
         send_sms(sender, f"Sorry, couldn't fetch that image. Error: {e}")
         return
 
-    # Send MMS with the image (falls back to SMS if MMS outbox fails)
+    # Send MMS with the image (falls back to text-only if MMS fails)
     caption = f"Thermal: {request.lat:.2f}, {request.lon:.2f}"
     if not send_mms(sender, caption, image_path):
-        send_sms(sender, f"{caption}\nImage saved: {image_path.name}")
+        send_sms(sender, f"{caption}\nImage saved but MMS failed. "
+                         f"Check --tasker-help for setup.")
 
 
 # ---------------------------------------------------------------------------
@@ -221,19 +252,27 @@ def daemon_loop():
     log.info("=" * 50)
     log.info("SatPhone SMS daemon starting")
     log.info("Poll interval: %ds | DB: %s", POLL_INTERVAL, config.DB_PATH)
-    log.info("MMS outbox: %s", MMS_OUTBOX)
+    log.info("Shared image dir: %s", SHARED_IMG_DIR)
     log.info("=" * 50)
 
     _init_tracking()
     limiter = RateLimiter()
 
     # Verify termux-api is available
-    test = _run_termux(["termux-sms-list", "-l", "1"])
+    test = _run_cmd(["termux-sms-list", "-l", "1"])
     if test is None:
         log.error("termux-sms-list not working. Is Termux:API installed?")
-        log.error("  Install: pkg install termux-api")
-        log.error("  Also install the Termux:API app from F-Droid.")
+        log.error("  1. Install the Termux:API app from F-Droid")
+        log.error("  2. pkg install termux-api")
+        log.error("  3. Grant SMS permissions to Termux:API")
         sys.exit(1)
+
+    # Verify shared storage
+    if not SHARED_IMG_DIR.parent.exists():
+        log.warning(
+            "Shared storage not available at %s", SHARED_IMG_DIR.parent,
+        )
+        log.warning("MMS will fail. Run: termux-setup-storage")
 
     log.info("Waiting for SMS...")
 
@@ -267,73 +306,152 @@ def daemon_loop():
 
 
 # ---------------------------------------------------------------------------
-# Single-message mode (for Tasker → Termux:Tasker integration)
+# Single-message mode (called via --handle)
 # ---------------------------------------------------------------------------
 
 def handle_one(sender: str, body: str):
-    """Process a single message and exit. Called by Tasker."""
+    """Process a single message and exit."""
     _init_tracking()
     limiter = RateLimiter()
     handle_message(sender, body, limiter)
 
 
 # ---------------------------------------------------------------------------
+# Test MMS intent (--test-mms)
+# ---------------------------------------------------------------------------
+
+def test_mms(number: str):
+    """Send a test MMS intent to verify Tasker is set up correctly."""
+    # Create a small test image
+    try:
+        from PIL import Image as PILImage
+        test_img = config.OUTPUT_DIR / "test_mms.jpg"
+        config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        img = PILImage.new("RGB", (100, 100), color=(255, 100, 50))
+        img.save(test_img, "JPEG")
+        log.info("Created test image: %s", test_img)
+    except Exception as e:
+        log.error("Failed to create test image: %s", e)
+        return
+
+    ok = send_mms(number, "SatPhone MMS test", test_img)
+    if ok:
+        print(f"Test MMS intent sent to Tasker for {number}")
+        print("If Tasker is set up correctly, you should receive an MMS.")
+        print("If not, run: python sms_daemon.py --tasker-help")
+    else:
+        print("MMS failed. Check the log and run --tasker-help for setup.")
+
+
+# ---------------------------------------------------------------------------
 # Tasker setup guide
 # ---------------------------------------------------------------------------
 
-TASKER_HELP = """\
-=== Tasker Setup for SatPhone MMS ===
+TASKER_HELP = r"""
+============================================================
+  SatPhone — Tasker Setup for MMS (no Termux:Tasker needed)
+============================================================
 
-SatPhone uses Tasker to send MMS (images) because Android doesn't allow
-background apps to send MMS directly. Text-only replies work without Tasker.
+The daemon handles everything: polling SMS, processing images,
+sending text replies. Tasker's only job is sending the MMS,
+because Android doesn't let background apps send MMS directly.
 
-INSTALL:
-  1. Tasker          (Play Store, ~$3.99)
-  2. Termux:Tasker   (F-Droid — lets Tasker run Termux scripts)
-  3. Grant Termux:Tasker the "Run commands in Termux" permission
+PREREQUISITES
+─────────────
+1. Tasker               (Play Store, ~$3.99)
+2. Termux:API app       (F-Droid — you probably already have this)
+3. Run once in Termux:  termux-setup-storage
+   (grants access to shared storage for passing images to Tasker)
 
---- Option A: Let Tasker trigger the script (recommended) ---
+HOW IT WORKS
+────────────
+  Daemon (Termux)             Tasker (Android)
+  ─────────────────           ──────────────────
+  polls SMS inbox
+  parses "therm ..."
+  fetches satellite image
+  copies JPEG to shared       ← image lands in
+    storage                     /storage/.../SatPhone/
+  broadcasts intent ──────→   receives intent
+                               reads %recipient, %body, %image
+                               sends MMS with image attached
 
-  Profile: "SatPhone SMS Received"
-    Trigger:  Event → Phone → Received Text
-              Type: SMS
-              Sender: *
-              Content: therm*
-    Task:     "Process SatPhone"
-              1. Termux → Run Command:
-                 Command:  cd ~/satphone && source .venv/bin/activate && \\
-                           python sms_daemon.py --handle "%SMSRF" "%SMSRB"
-                 In Terminal: OFF
+TASKER SETUP (step by step)
+───────────────────────────
 
-  This lets Tasker call the script immediately when an SMS arrives
-  (no polling delay). The daemon mode is not needed with this option.
+STEP 1:  Create the Task  (what Tasker does when triggered)
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
 
---- Option B: Daemon polls + Tasker sends MMS ---
+  a. Open Tasker → tap TASKS tab at the top
+  b. Tap  +  (bottom right) → name it:  Send SatPhone MMS
+  c. Inside the task, tap  +  to add an action:
 
-  Run the daemon in Termux:
-    cd ~/satphone && source .venv/bin/activate
-    nohup python sms_daemon.py &
+     ─── Action 1: Send Intent ───
+     • Category:  System  →  Send Intent
+     • Fill in EXACTLY:
+         Action:          android.intent.action.SENDTO
+         Data:            smsto:%recipient
+         Extra:           sms_body:%body
+         Extra:           android.intent.extra.STREAM:file://%image
+         Package:         (leave blank)
+         Class:           (leave blank)
+         Mime Type:       image/jpeg
+         Target:          Activity
 
-  Create a Tasker profile to send queued MMS:
+     • Tap the back arrow to save the action.
 
-  Profile: "SatPhone MMS Sender"
-    Trigger:  Event → File → File Modified
-              Path: /data/data/com.termux/files/home/satphone/.mms_outbox
-              File Filter: *.json
-    Task:     "Send SatPhone MMS"
-              1. Read File: %triggered_path → %json
-              2. JSON Read: %json → %to, %body, %image
-              3. Send MMS:
-                 Number: %to
-                 Message: %body
-                 Attachment: %image
-              4. Delete File: %triggered_path
+  d. That's the only action needed. Tap back to save the task.
 
---- Notes ---
-  • Option A is simpler (one Tasker profile, no daemon needed).
-  • Option B is more resilient (daemon handles retries, queuing).
-  • You can combine both: Tasker triggers for speed, daemon as fallback.
-  • Grant Termux:API notification access for termux-sms-list to work.
+STEP 2:  Create the Profile  (what triggers the task)
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+  a. Tap PROFILES tab at the top
+  b. Tap  +  (bottom right)
+  c. Select:  Event
+  d. Select:  System  →  Intent Received
+  e. Fill in:
+         Action:   com.satphone.SEND_MMS
+         (leave everything else blank)
+  f. Tap back arrow
+  g. Tasker asks which Task to link → select "Send SatPhone MMS"
+
+STEP 3:  Enable and test
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+  a. Make sure the profile toggle is ON (green checkmark)
+  b. In Termux, run:
+       python sms_daemon.py --test-mms "+1YOURNUMBER"
+  c. Tasker should fire, opening your messaging app with the
+     image attached and the recipient filled in.
+  d. Tap Send.
+
+NOTES
+─────
+• The "Send Intent" approach opens your messaging app with
+  everything pre-filled. On most phones you just tap Send.
+  This is the most reliable cross-device approach.
+
+• If you want FULLY automated MMS (no tap needed), install
+  the Tasker plugin "AutoShare" (free on Play Store) and
+  replace the Send Intent action with:
+    AutoShare → Send MMS
+    Number: %recipient,  Text: %body,  File: %image
+
+• The daemon handles SMS text replies on its own (help text,
+  rate limit messages, "Processing..." acknowledgment).
+  Tasker is ONLY needed for the image MMS.
+
+• Run the daemon in Termux:
+    source .venv/bin/activate
+    python sms_daemon.py              # foreground
+    nohup python sms_daemon.py &      # background
+
+TEST COMMAND
+────────────
+  python sms_daemon.py --test-mms "+15551234567"
+
+  This sends a dummy image through the full MMS flow so you can
+  verify Tasker is receiving the intent and composing the MMS.
 """
 
 
@@ -348,7 +466,11 @@ def main():
     )
     parser.add_argument(
         "--handle", nargs=2, metavar=("SENDER", "BODY"),
-        help='Process a single SMS: --handle "+15551234567" "therm 44.43 -110.59"',
+        help='Process one SMS: --handle "+15551234567" "therm 44.43 -110.59"',
+    )
+    parser.add_argument(
+        "--test-mms", metavar="NUMBER",
+        help='Test MMS sending: --test-mms "+15551234567"',
     )
     parser.add_argument(
         "--tasker-help", action="store_true",
@@ -359,6 +481,10 @@ def main():
 
     if args.tasker_help:
         print(TASKER_HELP)
+        return
+
+    if args.test_mms:
+        test_mms(args.test_mms)
         return
 
     if args.handle:
