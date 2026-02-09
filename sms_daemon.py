@@ -133,18 +133,21 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
     # Termux is in the foreground so am start works (Android 14
     # blocks background activity starts, which is why Tasker can't
     # do this step from a broadcast-triggered task).
-    result = _run_cmd([
+    am_cmd = [
         "am", "start",
         "-a", "android.intent.action.SEND",
         "-t", "image/jpeg",
         "-p", config.MESSAGING_PACKAGE,
-        "--eu", "android.intent.extra.STREAM", f"file://{shared_path}",
+        "--eu", "android.intent.extra.STREAM",
+        f"file://{shared_path}",
         "--es", "address", number,
-        "--es", "sms_body", body,
-    ], timeout=10)
+    ]
+    log.info("MMS cmd: %s", " ".join(am_cmd))
+
+    result = _run_cmd(am_cmd, timeout=10)
 
     if result is None:
-        log.error("Failed to open messaging app")
+        log.error("Failed to open messaging app (exit ≠ 0)")
         return False
 
     log.info("Messaging app opened for MMS → %s", number)
