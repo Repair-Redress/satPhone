@@ -129,10 +129,14 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
     if shared_path is None:
         return False
 
-    # Step 1: Open messaging app with MMS pre-composed.
+    # Kill any existing Messages instance so the new intent is
+    # processed fresh (otherwise Android reuses the old activity
+    # and silently ignores the extras).
+    _run_cmd(["am", "force-stop", config.MESSAGING_PACKAGE], timeout=5)
+
+    # Open messaging app with MMS pre-composed.
     # Termux is in the foreground so am start works (Android 14
-    # blocks background activity starts, which is why Tasker can't
-    # do this step from a broadcast-triggered task).
+    # blocks background activity starts from broadcast-triggered tasks).
     am_cmd = [
         "am", "start",
         "-a", "android.intent.action.SEND",
@@ -147,7 +151,7 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
     result = _run_cmd(am_cmd, timeout=10)
 
     if result is None:
-        log.error("Failed to open messaging app (exit ≠ 0)")
+        log.error("Failed to open messaging app")
         return False
 
     log.info("Messaging app opened for MMS → %s", number)
