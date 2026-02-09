@@ -26,6 +26,8 @@ pkg install -y \
     python \
     build-essential \
     binutils \
+    ninja \
+    cmake \
     gdal \
     proj \
     libxml2 \
@@ -59,7 +61,8 @@ if [ "$PREBUILT" = false ]; then
     export LDFLAGS="-lm -lcompiler_rt"
     export MATHLIB=m
 
-    pip install --upgrade pip setuptools wheel
+    pip install --upgrade pip setuptools wheel meson-python meson
+    pip install ninja || true  # OK if fails — system ninja is used
 
     echo "  Installing numpy (this may take a few minutes)..."
     pip install numpy
