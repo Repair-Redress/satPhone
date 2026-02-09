@@ -50,12 +50,14 @@ SMS_POLL_INTERVAL = 5          # seconds between inbox checks
 SMS_FETCH_COUNT = 5            # messages to read per poll
 MESSAGING_PACKAGE = "com.google.android.apps.messaging"  # Google Messages
 
-# Shared storage path for MMS images (Tasker can read files here).
-# Created by `termux-setup-storage`; falls back to project dir on desktop.
-_TERMUX_SHARED = Path.home() / "storage" / "shared"
+# Shared storage path for MMS images (other apps can read files here).
+# MUST use /storage/emulated/0 — NOT the Termux symlink ~/storage/shared —
+# because file:// URIs under /data/data/com.termux/ are invisible to
+# other apps like Google Messages.
+_ANDROID_SHARED = Path("/storage/emulated/0")
 MMS_IMAGE_DIR = (
-    (_TERMUX_SHARED / "Pictures" / "SatPhone")
-    if _TERMUX_SHARED.exists()
+    (_ANDROID_SHARED / "Pictures" / "SatPhone")
+    if _ANDROID_SHARED.exists()
     else OUTPUT_DIR
 )
 
