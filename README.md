@@ -5,9 +5,10 @@ Satellite thermal imagery delivered via SMS. Text a location, get back a thermal
 No cloud servers. No SaaS. No API keys. Just a phone with a data plan.
 
 <p align="center">
-  <img src="examples/thermal_40.92_-73.91_1770661836.jpg" width="280" alt="Long Island Sound — water bodies glow warm against frozen land">
-  <img src="examples/thermal_35.06_-90.16_1770662029.jpg" width="280" alt="Memphis TN — industrial heat islands along the Mississippi">
-  <img src="examples/thermal_44.98_-74.75_1770660571.jpg" width="280" alt="St. Lawrence River — open water radiates heat in winter">
+  <img src="examples/thermal_40.92_-73.91_1770661836.jpg" width="220" alt="Long Island Sound — water bodies glow warm against frozen land">
+  <img src="examples/thermal_35.06_-90.16_1770662029.jpg" width="220" alt="Memphis TN — industrial heat islands along the Mississippi">
+  <img src="examples/thermal_44.98_-74.75_1770660571.jpg" width="220" alt="St. Lawrence River — open water radiates heat in winter">
+  <img src="examples/thermal_43.28_-77.31_1770661708.jpg" width="220" alt="Rochester / Lake Ontario shoreline">
 </p>
 
 ## How It Works
