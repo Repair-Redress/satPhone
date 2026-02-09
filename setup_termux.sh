@@ -29,12 +29,16 @@ pkg install -y \
     ninja \
     cmake \
     gdal \
+    openexr \
     proj \
     libxml2 \
     libjpeg-turbo \
     libpng \
     libopenblas \
     git
+
+# Fix gdal-config permissions (Termux pkg sometimes doesn't set +x)
+chmod +x "$PREFIX/bin/gdal-config" 2>/dev/null || true
 
 # --- 2. Try tur-repo for pre-built Python packages ---
 echo ""
@@ -90,11 +94,14 @@ echo ""
 echo "[5/6] Installing remaining Python dependencies..."
 pip install --upgrade pip
 
-# rasterio needs GDAL — set config path
+# rasterio needs GDAL — try gdal-config first, fall back to GDAL_VERSION
 export GDAL_CONFIG="$(which gdal-config 2>/dev/null || echo '')"
-if [ -z "$GDAL_CONFIG" ]; then
-    echo "  WARNING: gdal-config not found. rasterio may fail to build."
-    echo "  Try: pkg install gdal"
+if [ -n "$GDAL_CONFIG" ] && "$GDAL_CONFIG" --version >/dev/null 2>&1; then
+    echo "  Using gdal-config: $GDAL_CONFIG"
+else
+    echo "  gdal-config not usable, setting GDAL_VERSION manually..."
+    export GDAL_VERSION=$(pkg show gdal 2>/dev/null | grep "^Version:" | head -1 | cut -d' ' -f2 | cut -d'-' -f1)
+    echo "  GDAL_VERSION=$GDAL_VERSION"
 fi
 
 pip install rasterio pystac-client planetary-computer
