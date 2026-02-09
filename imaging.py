@@ -240,10 +240,45 @@ def process_thermal_image(
     stretch_info: dict = {}
 
     if water_mask is not None and water_mask.shape == data.shape:
-        from scipy.ndimage import binary_dilation, binary_erosion
+        # Pure-numpy morphology (avoids scipy dependency)
+        def _morph(mask: np.ndarray, iterations: int, dilate: bool) -> np.ndarray:
+            """Binary dilation (dilate=True) or erosion via 3×3 cross kernel."""
+            out = mask.copy()
+            for _ in range(iterations):
+                shifted = np.zeros_like(out)
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)]:
+                    sliced = out[
+                        max(dr, 0): out.shape[0] + min(dr, 0) or None,
+                        max(dc, 0): out.shape[1] + min(dc, 0) or None,
+                    ]
+                    target = shifted[
+                        max(-dr, 0): shifted.shape[0] + min(-dr, 0) or None,
+                        max(-dc, 0): shifted.shape[1] + min(-dc, 0) or None,
+                    ]
+                    if dilate:
+                        target |= sliced
+                    else:
+                        target &= sliced
+                if not dilate:
+                    # Erosion: start from all-True, AND each shift
+                    eroded = np.ones_like(out)
+                    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)]:
+                        sliced = out[
+                            max(dr, 0): out.shape[0] + min(dr, 0) or None,
+                            max(dc, 0): out.shape[1] + min(dc, 0) or None,
+                        ]
+                        target = eroded[
+                            max(-dr, 0): eroded.shape[0] + min(-dr, 0) or None,
+                            max(-dc, 0): eroded.shape[1] + min(-dc, 0) or None,
+                        ]
+                        target &= sliced
+                    out = eroded
+                else:
+                    out = shifted
+            return out
 
-        water_dilated = binary_dilation(water_mask, iterations=2)
-        water_eroded = binary_erosion(water_mask, iterations=2)
+        water_dilated = _morph(water_mask, iterations=2, dilate=True)
+        water_eroded = _morph(water_mask, iterations=2, dilate=False)
 
         pure_water_mask = water_eroded & usable
         pure_land_mask = ~water_dilated & usable

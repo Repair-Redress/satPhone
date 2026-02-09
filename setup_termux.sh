@@ -35,6 +35,7 @@ pkg install -y \
     libjpeg-turbo \
     libpng \
     libopenblas \
+    rust \
     git
 
 # Fix gdal-config permissions (Termux pkg sometimes doesn't set +x)
@@ -44,10 +45,10 @@ chmod +x "$PREFIX/bin/gdal-config" 2>/dev/null || true
 echo ""
 echo "[3/6] Installing Python scientific packages..."
 
-# Try tur-repo first (has pre-compiled numpy/scipy/pillow)
+# Try tur-repo first (has pre-compiled numpy/pillow)
 if pkg install -y tur-repo 2>/dev/null; then
     echo "  tur-repo available, trying pre-built packages..."
-    pkg install -y python-numpy python-scipy python-pillow 2>/dev/null && {
+    pkg install -y python-numpy python-pillow 2>/dev/null && {
         echo "  Pre-built packages installed successfully"
         PREBUILT=true
     } || {
@@ -70,9 +71,6 @@ if [ "$PREBUILT" = false ]; then
 
     echo "  Installing numpy (this may take a few minutes)..."
     pip install numpy
-
-    echo "  Installing scipy..."
-    pip install scipy
 
     echo "  Installing Pillow..."
     pip install Pillow
@@ -104,6 +102,8 @@ else
     echo "  GDAL_VERSION=$GDAL_VERSION"
 fi
 
+# pystac-client requires pydantic v2 which needs pydantic-core (Rust).
+# Rust is installed above so this will compile (takes ~10-30 min first time).
 pip install rasterio pystac-client planetary-computer
 
 # --- 5. Create runtime directories ---
@@ -115,9 +115,8 @@ mkdir -p thermal_output
 echo ""
 echo "Verifying imports..."
 python -c "
-import numpy, scipy, PIL, rasterio, pystac_client, planetary_computer
+import numpy, PIL, rasterio, pystac_client, planetary_computer
 print('  numpy', numpy.__version__)
-print('  scipy', scipy.__version__)
 print('  Pillow', PIL.__version__)
 print('  rasterio', rasterio.__version__)
 print('All dependencies OK')
