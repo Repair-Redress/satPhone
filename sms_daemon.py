@@ -93,7 +93,7 @@ def list_inbox(count: int = SMS_FETCH_COUNT) -> list[dict]:
 
 
 def _copy_to_shared(image_path: Path) -> Optional[Path]:
-    """Copy an image to shared storage so other apps can read it."""
+    """Copy an image to shared storage and register it with MediaStore."""
     if not SHARED_IMG_DIR.parent.exists():
         log.error(
             "Shared storage not found at %s. "
@@ -106,11 +106,19 @@ def _copy_to_shared(image_path: Path) -> Optional[Path]:
     shared_path = SHARED_IMG_DIR / image_path.name
     try:
         shutil.copy2(image_path, shared_path)
-        log.info("Image → shared storage: %s", shared_path)
-        return shared_path
+        size_kb = shared_path.stat().st_size / 1024
+        log.info("Image → shared storage: %s (%.0f KB)", shared_path, size_kb)
     except OSError as e:
         log.error("Failed to copy image to shared storage: %s", e)
         return None
+
+    # Register with Android MediaStore so Messages can read it.
+    # Without this, a freshly-copied file's file:// URI may be
+    # invisible to other apps.
+    _run_cmd(["termux-media-scan", str(shared_path)], timeout=10)
+    time.sleep(0.5)  # let the scan finish before am start
+
+    return shared_path
 
 
 def send_mms(number: str, body: str, image_path: Path) -> bool:
@@ -167,6 +175,13 @@ def send_mms(number: str, body: str, image_path: Path) -> bool:
     ], timeout=10)
 
     log.info("Tap-send broadcast → Tasker")
+
+    # Wait for AutoInput to finish (3s Tasker wait + tap + go home).
+    # This prevents the next MMS from colliding with the current one.
+    MMS_COOLDOWN = 8
+    log.info("Waiting %ds for MMS to complete...", MMS_COOLDOWN)
+    time.sleep(MMS_COOLDOWN)
+
     return True
 
 
