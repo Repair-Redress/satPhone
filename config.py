@@ -45,6 +45,11 @@ THERMAL_OFFSET = 149.0
 _TERMUX_DB = Path("/data/data/com.termux/files/home/satphone.db")
 DB_PATH = _TERMUX_DB if _TERMUX_DB.parent.exists() else PROJECT_DIR / "satphone.db"
 
+# SMS daemon
+SMS_POLL_INTERVAL = 5          # seconds between inbox checks
+SMS_FETCH_COUNT = 5            # messages to read per poll
+MMS_OUTBOX_DIR = PROJECT_DIR / ".mms_outbox"   # Tasker watches this
+
 # Logging
 LOG_FILE = PROJECT_DIR / "satphone.log"
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file

@@ -6,6 +6,9 @@
 thermal_output/*
 !thermal_output/.gitkeep
 
+# MMS outbox (Tasker picks up and deletes these)
+.mms_outbox/
+
 # SQLite database (users, credits, rate limits)
 *.db
 

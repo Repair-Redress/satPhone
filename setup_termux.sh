@@ -24,6 +24,7 @@ echo ""
 echo "[2/6] Installing system dependencies..."
 pkg install -y \
     python \
+    termux-api \
     build-essential \
     binutils \
     ninja \
@@ -130,10 +131,18 @@ print('All dependencies OK')
 }
 
 echo ""
-echo "To run SatPhone:"
+echo "To run a single test:"
 echo "  source .venv/bin/activate"
 echo "  python main.py 44.43 -110.59"
 echo ""
-echo "Or with SMS-style input:"
-echo '  python main.py "therm 44.43 -110.59"'
+echo "To start the SMS daemon:"
+echo "  source .venv/bin/activate"
+echo "  python sms_daemon.py              # foreground"
+echo "  nohup python sms_daemon.py &      # background"
+echo ""
+echo "For MMS setup (Tasker):"
+echo "  python sms_daemon.py --tasker-help"
+echo ""
+echo "IMPORTANT: Also install the Termux:API app from F-Droid"
+echo "  (separate from the termux-api pkg installed above)."
 echo ""
