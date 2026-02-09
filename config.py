@@ -48,6 +48,7 @@ DB_PATH = _TERMUX_DB if _TERMUX_DB.parent.exists() else PROJECT_DIR / "satphone.
 # SMS daemon
 SMS_POLL_INTERVAL = 5          # seconds between inbox checks
 SMS_FETCH_COUNT = 5            # messages to read per poll
+MESSAGING_PACKAGE = "com.google.android.apps.messaging"  # Google Messages
 
 # Shared storage path for MMS images (Tasker can read files here).
 # Created by `termux-setup-storage`; falls back to project dir on desktop.

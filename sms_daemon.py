@@ -115,38 +115,52 @@ def _copy_to_shared(image_path: Path) -> Optional[Path]:
 
 def send_mms(number: str, body: str, image_path: Path) -> bool:
     """
-    Send MMS via Tasker + AutoInput (fully automated).
+    Send MMS fully automated via am start + Tasker AutoInput.
+
+    Termux opens the messaging app (has foreground permission).
+    Tasker + AutoInput taps the Send button (has accessibility permission).
 
     Flow:
-      1. Copy JPEG to shared storage (messaging app can read it)
-      2. Broadcast explicit intent to Tasker (-p targets package)
-      3. Tasker composes MMS, AutoInput taps Send
-
-    Requires one-time Tasker setup — see --tasker-help.
+      1. Copy JPEG to shared storage
+      2. am start → opens messaging app with MMS pre-composed
+      3. am broadcast → tells Tasker to tap Send via AutoInput
     """
     shared_path = _copy_to_shared(image_path)
     if shared_path is None:
         return False
 
-    # Explicit broadcast to Tasker's package.
-    # The -p flag makes this an explicit broadcast, which bypasses
-    # Android 14's restriction on implicit broadcasts.
+    # Step 1: Open messaging app with MMS pre-composed.
+    # Termux is in the foreground so am start works (Android 14
+    # blocks background activity starts, which is why Tasker can't
+    # do this step from a broadcast-triggered task).
     result = _run_cmd([
-        "am", "broadcast",
-        "--user", "0",
-        "-a", "com.satphone.SEND_MMS",
-        "-p", "net.dinglisch.android.taskerm",
-        "--es", "recipient", number,
-        "--es", "body", body,
-        "--es", "image", str(shared_path),
+        "am", "start",
+        "-a", "android.intent.action.SEND",
+        "-t", "image/jpeg",
+        "-p", config.MESSAGING_PACKAGE,
+        "--eu", "android.intent.extra.STREAM", f"file://{shared_path}",
+        "--es", "address", number,
+        "--es", "sms_body", body,
     ], timeout=10)
 
-    if result is not None:
-        log.info("MMS broadcast → Tasker for %s", number)
-        return True
+    if result is None:
+        log.error("Failed to open messaging app")
+        return False
 
-    log.error("MMS broadcast failed")
-    return False
+    log.info("Messaging app opened for MMS → %s", number)
+
+    # Step 2: Tell Tasker to tap Send after a delay.
+    # Tasker profile: Intent Received → com.satphone.TAP_SEND
+    # Tasker task: Wait 3s → AutoInput Click "MMS" → Go Home
+    _run_cmd([
+        "am", "broadcast",
+        "--user", "0",
+        "-a", "com.satphone.TAP_SEND",
+        "-p", "net.dinglisch.android.taskerm",
+    ], timeout=10)
+
+    log.info("Tap-send broadcast → Tasker")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +335,7 @@ def handle_one(sender: str, body: str):
 # ---------------------------------------------------------------------------
 
 def test_mms(number: str):
-    """Send a test MMS to verify the Tasker broadcast works."""
+    """Send a test MMS to verify the full flow works."""
     # Create a small test image
     try:
         from PIL import Image as PILImage
@@ -334,21 +348,20 @@ def test_mms(number: str):
         log.error("Failed to create test image: %s", e)
         return
 
-    print(f"\nBroadcasting MMS intent to Tasker for {number}...")
+    print(f"\nTesting MMS flow for {number}...")
     ok = send_mms(number, "SatPhone MMS test", test_img)
     if ok:
-        print("Broadcast sent.")
         print("\nWhat should happen:")
-        print("  1. Tasker receives the intent")
-        print("  2. Messaging app opens with image + recipient")
-        print("  3. AutoInput taps Send automatically")
-        print(f"\nIf nothing happened, run: python sms_daemon.py --tasker-help")
+        print("  1. Messages app opens with image + recipient")
+        print("  2. Tasker waits 3 seconds")
+        print("  3. AutoInput taps Send")
+        print("  4. Returns to home screen")
+        print(f"\nIf Messages didn't open: check termux-setup-storage")
+        print(f"If Send wasn't tapped: run --tasker-help")
     else:
-        print("\nBroadcast failed. Try:")
-        print("  1. Run: termux-setup-storage  (grant storage permission)")
+        print("\nFailed. Try:")
+        print("  1. Run: termux-setup-storage")
         print("  2. Check that ~/storage/shared/ exists")
-        print("  3. Make sure Tasker is installed")
-        print("  4. Run: python sms_daemon.py --tasker-help")
 
 
 # ---------------------------------------------------------------------------
@@ -362,104 +375,75 @@ TASKER_HELP = r"""
 
 WHAT THIS DOES
 ──────────────
-  The daemon (Termux) handles everything: polling SMS, processing
-  satellite images, sending text replies. When an image is ready,
-  it broadcasts an Android intent to Tasker. Tasker opens the
-  messaging app with the MMS pre-composed, and AutoInput taps
-  the Send button automatically. The whole thing takes ~2 seconds.
+  The daemon (Termux) handles SMS polling, image processing,
+  and text replies. When a thermal image is ready:
 
-  Daemon (Termux)                  Tasker + AutoInput
-  ───────────────                  ──────────────────
-  polls SMS inbox
-  parses & processes request
-  copies image to shared storage
-  am broadcast ──────────────→    Intent Received fires
-                                   1. Compose MMS
-                                   2. Wait 2 seconds
-                                   3. AutoInput taps Send
-                                   4. Go Home
-                                       ↓
-                                   MMS sent from your SIM #
+    1. Termux opens Messages with MMS pre-composed (am start)
+    2. Tasker receives a broadcast and waits 3 seconds
+    3. AutoInput taps the Send button
+    4. Returns to home screen
+
+  Termux opens the app (it has foreground permission).
+  Tasker just taps Send (it has accessibility permission).
+  MMS is sent from your actual SIM number.
 
 INSTALL (one-time)
 ──────────────────
   1. Tasker        — Play Store (~$3.99)
-  2. AutoInput     — Play Store (free w/ ads, or $1.49)
+  2. AutoInput     — Play Store (free)
      After install: Settings → Accessibility → AutoInput → ON
-  3. In Termux:    termux-setup-storage   (tap Allow)
+  3. In Tasker:    three dots → Preferences → Misc →
+                   Allow External Access → ON
+  4. In Termux:    termux-setup-storage   (tap Allow)
 
-TASKER SETUP (step by step)
-───────────────────────────
+TASKER SETUP
+────────────
 
-STEP 1: Create the Task
-╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-  Open Tasker → TASKS tab → tap + → name it: SatPhone MMS
+  STEP 1: Create the Task
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    TASKS tab → + → name it: SatPhone Tap Send
 
-  Add 4 actions (tap + for each):
+    Add 3 actions:
 
-  ┌─ Action 1: Compose MMS ─────────────────────────────────┐
-  │  System → Send Intent                                   │
-  │    Action:     android.intent.action.SENDTO              │
-  │    Data:       smsto:%recipient                          │
-  │    Extra:      sms_body:%body                            │
-  │    Extra:      android.intent.extra.STREAM:file://%image │
-  │    Mime Type:  image/jpeg                                │
-  │    Target:     Activity                                  │
-  └──────────────────────────────────────────────────────────┘
+    ┌─ Action 1: Wait for messaging app ──────────────────┐
+    │  Task → Wait                                        │
+    │    Seconds: 3                                       │
+    └─────────────────────────────────────────────────────┘
 
-  ┌─ Action 2: Wait for messaging app to load ──────────────┐
-  │  Task → Wait                                            │
-  │    Seconds: 2                                           │
-  └──────────────────────────────────────────────────────────┘
+    ┌─ Action 2: Tap the Send button ─────────────────────┐
+    │  Plugin → AutoInput → Action                        │
+    │    Action: Click                                    │
+    │    Text:   MMS                                      │
+    └─────────────────────────────────────────────────────┘
 
-  ┌─ Action 3: Tap the Send button ─────────────────────────┐
-  │  Plugin → AutoInput → Action                            │
-  │    Type:   Tap                                          │
-  │    Value:  Send SMS                                     │
-  │  (If that doesn't match, try: "Send", "send message",  │
-  │   or use AutoInput UI Query to find the right label)    │
-  └──────────────────────────────────────────────────────────┘
+    ┌─ Action 3: Return to background ────────────────────┐
+    │  App → Go Home                                      │
+    │    Page: 1                                          │
+    └─────────────────────────────────────────────────────┘
 
-  ┌─ Action 4: Return to background ────────────────────────┐
-  │  App → Go Home                                          │
-  │    Page: 1                                              │
-  └──────────────────────────────────────────────────────────┘
+  STEP 2: Create the Profile
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    PROFILES tab → + → Event → System → Intent Received
 
-STEP 2: Create the Profile
-╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-  PROFILES tab → tap + → Event → System → Intent Received
+      Action:  com.satphone.TAP_SEND
+      (leave everything else blank)
 
-    Action:  com.satphone.SEND_MMS
-    (leave Cat, Cat Regex, Scheme, Data, etc. all blank)
+    Link it to task "SatPhone Tap Send"
 
-  Tap back → link it to task "SatPhone MMS"
-  Make sure the profile toggle is ON.
-
-STEP 3: Test
-╌╌╌╌╌╌╌╌╌╌╌╌
-  In Termux:
+  STEP 3: Test
+  ╌╌╌╌╌╌╌╌╌╌╌╌
     python sms_daemon.py --test-mms "+1YOURNUMBER"
 
-  You should see:
-    1. Messaging app flashes open with image + recipient
-    2. AutoInput taps Send
-    3. Phone goes back to home screen
-    4. MMS arrives on the target phone
+SEND BUTTON LABEL
+─────────────────
+  If "MMS" doesn't match your Send button, try:
+    "Send SMS", "Send message", "Send", or "send"
 
-FINDING THE SEND BUTTON LABEL
-──────────────────────────────
-  The Send button label varies by messaging app:
-    Google Messages:   "Send SMS"  or  "Send message"
-    Samsung Messages:  "Send"
-    Other:             varies
-
-  To find yours:
-    1. Open your messaging app, compose a message
-    2. Open Tasker → TASKS → create a temp task
-    3. Add action: Plugin → AutoInput → UI Query
-    4. Run it — it lists all UI elements on screen
-    5. Find the Send button's "text" or "desc" value
-    6. Use that value in Action 3 above
+  To find your button's label:
+    1. Open Messages and compose a message with an image
+    2. In Tasker: add AutoInput → UI Query action, run it
+    3. Find the Send button's "text" value
+    4. Use that in Action 2 above
 
 RUNNING THE DAEMON
 ──────────────────
