@@ -295,6 +295,11 @@ def daemon_loop():
     log.info("Shared image dir: %s", SHARED_IMG_DIR)
     log.info("=" * 50)
 
+    # Acquire a wake lock so Android doesn't kill Termux or throttle
+    # the CPU when the screen is off.
+    _run_cmd(["termux-wake-lock"], timeout=5)
+    log.info("Wake lock acquired")
+
     _init_tracking()
     limiter = RateLimiter()
 
@@ -338,6 +343,8 @@ def daemon_loop():
 
         except KeyboardInterrupt:
             log.info("Daemon stopped (Ctrl-C)")
+            _run_cmd(["termux-wake-unlock"], timeout=5)
+            log.info("Wake lock released")
             break
         except Exception as e:
             log.error("Daemon loop error: %s", e, exc_info=True)
